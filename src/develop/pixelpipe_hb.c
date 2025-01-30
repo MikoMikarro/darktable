@@ -1129,8 +1129,8 @@ static void _collect_histogram_on_CPU(dt_dev_pixelpipe_t *pipe,
 #define tcscmp strcmp
 
 const OrtApi* g_ort = NULL;
-float conf = 0.3;
-float iou_threshold = 0.7;
+float conf = 0.25;
+float iou_threshold = 0.65;
 #define ORT_ABORT_ON_ERROR(expr)                             \
   do {                                                       \
     OrtStatus* onnx_status = (expr);                         \
@@ -1317,8 +1317,8 @@ static void process_mask_native(
                 int idx_out = i * output_h * output_w + y * output_w + x;
 
                 // FIXME
-                // if ((x < current_box.x1) || (x > current_box.x2) || (y < current_box.y1) || (y > current_box.y2))
-                //   interpolated_value = 0.0f;
+                if (((src_x*4) < current_box.x1) || ((src_x*4) > current_box.x2) || ((src_y*4) < current_box.y1) || ((src_y*4) > current_box.y2))
+                  interpolated_value = 0.0f;
 
                 output_masks[idx_out] = interpolated_value;
                 if (interpolated_value > max_value[i]) max_value[i] = output_masks[idx_out];
@@ -1700,7 +1700,7 @@ static gboolean _pixelpipe_process_on_CPU(dt_dev_pixelpipe_t *pipe,
       new_image[i*3 + 2] = local_copy[i*4 + 2];
     }
 
-    if (write_image_file(new_image, h, w, "/home/miko/Desktop/test1.png") != 0) {
+    if (write_image_file(new_image, h, w, "/home/miko/Desktop/test_base.png") != 0) {
         printf("Error writing image\n");
     }
     
@@ -1742,20 +1742,26 @@ static gboolean _pixelpipe_process_on_CPU(dt_dev_pixelpipe_t *pipe,
 
     if (out)
     {
-      for (int i = 0; i < stride; i++)
+      /*
+      for (int mask_id = 0; mask_id < n_masks; mask_id++)
       {
-        new_image[i * 3 + 0] = (uint8_t)(out[i] * 255.0);
-        new_image[i * 3 + 1] = (uint8_t)(out[i] * 255.0);
-        new_image[i * 3 + 2] = (uint8_t)(out[i] * 255.0);
+        for (int i = 0; i < stride; i++)
+        {
+          new_image[i * 3 + 0] = (uint8_t)(out[i + stride * mask_id] * 255.0);
+          new_image[i * 3 + 1] = (uint8_t)(out[i + stride * mask_id] * 255.0);
+          new_image[i * 3 + 2] = (uint8_t)(out[i + stride * mask_id] * 255.0);
+        }
+        char path[128];
+        sprintf(path, "/home/miko/Desktop/test%d.png", mask_id);
+        if (write_image_file(new_image, h, w, path) != 0)
+        {
+          printf("Error writing image\n");
+        }
       }
-
-      if (write_image_file(new_image, h, w, "/home/miko/Desktop/test2.png") != 0)
-      {
-        printf("Error writing image\n");
-      }
+      */
 
       pipe->proxy_data = (uint8_t*)malloc(sizeof(uint8_t) * stride * n_masks);
-      for (int i = 0; i < stride; i++){
+      for (int i = 0; i < stride * n_masks; i++){
         pipe->proxy_data[i] = (uint8_t)(out[i] * 255.0);
       }
 
