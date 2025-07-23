@@ -12,6 +12,10 @@ void process_mask_native( float *protos, float *masks_in, TensorBoxes* boxes,
                           int n, int mask_dim, int mask_h, int mask_w, int output_h,
                           int output_w, float *output_masks)
 {
+  if (output_w == 0 || output_h == 0) {
+    fprintf(stderr, "Invalid output dimensions\n");
+    exit(EXIT_FAILURE);
+  }
   // Allocate intermediate storage for masks [n, mask_h, mask_w]
   float *masks = (float *)malloc(n * mask_h * mask_w * sizeof(float));
   if (!masks) {
@@ -107,9 +111,10 @@ void prep_out_data( vector<Mat> input_data, int64_t definition_size, int64_t num
                     float** output, size_t output_height, size_t output_width, size_t* n_masks)
 {
   float* mask = (float*)input_data[0].data;
-  
-  TensorBoxes* boxes = (TensorBoxes*)valloc(numb_boxes * sizeof(TensorBoxes));
-  
+
+  // Use malloc instead of valloc
+  TensorBoxes* boxes = (TensorBoxes*)malloc(numb_boxes * sizeof(TensorBoxes));
+
   size_t coordinates_count = 4;
   size_t class_count = 1;
   size_t mask_dim = definition_size - coordinates_count - class_count;
@@ -139,18 +144,19 @@ void prep_out_data( vector<Mat> input_data, int64_t definition_size, int64_t num
   }
   printf("counter: %ld\n", counter);
   if (counter == 0){
+    free(boxes);
     return;
   }
   boxes = (TensorBoxes*)realloc(boxes, counter * sizeof(TensorBoxes));
   sort_tensor_boxes_by_score(boxes, counter);
-  
+
   TensorBoxes* output_boxes = (TensorBoxes*)malloc(counter * sizeof(TensorBoxes));
   size_t num_boxes = NMS(boxes, counter, output_boxes);
   printf("num_boxes: %ld\n", num_boxes);
   output_boxes = (TensorBoxes*)realloc(output_boxes, num_boxes * sizeof(TensorBoxes));
   int mask_h = 256, mask_w = 256;
   // Allocate and initialize inputs
-  float *protos = (float*)input_data[5].data;
+  float *protos = (float*)input_data[input_data.size()-1].data;
   float *masks_in = (float *)malloc(num_boxes * mask_dim * sizeof(float));
   float *output_masks = (float *)malloc(output_height * output_width * num_boxes * sizeof(float));
   for (size_t i = 0; i < num_boxes; ++i){
@@ -158,35 +164,91 @@ void prep_out_data( vector<Mat> input_data, int64_t definition_size, int64_t num
       masks_in[i * mask_dim + j] = output_boxes[i].mask[j];
     }
   }
-  
+  printf("num_masks: %ld\n", num_boxes);
+
   process_mask_native(protos, masks_in, output_boxes, num_boxes, mask_dim, mask_h, mask_w, output_height, output_width, output_masks);
+  printf("Masks processed\n");
+
   *output = output_masks;
   *n_masks = num_boxes;
   for (size_t i = 0; i < counter; i++) {
     free(boxes[i].mask);
   }
   free(boxes);
+//free(masks_in);
+
+  // Free output_boxes after use (add at end of prep_out_data)
+//for (size_t i = 0; i < num_boxes; i++) {
+//  free(output_boxes[i].mask);
+//}
+//free(output_boxes);
+}
+
+inline bool file_exists (const char* name) {
+  struct stat buffer;
+  return (stat (name, &buffer) == 0);
 }
 
 int run_inference(uint8_t* input_image, const int h, const int w,
                   float** out, size_t * n_masks) {
-  auto model = readNetFromONNX("/home/miko/Documents/OpenSourceProjects/opencv-dnn/fast_sam_1024_simp.onnx");
+  if (h <= 0 || w <= 0 || !input_image) {
+    fprintf(stderr, "Invalid input dimensions or null pointer\n");
+    return -1;
+  }
 
+  char * model_path = g_strdup_printf("%s/darktable/fast_sam_1024.onnx", darktable.sharedir);
+  printf("Opening model: %s\n", model_path);
+
+  // Check if file exists
+  if (!file_exists(model_path)) {
+    fprintf(stderr, "Model file not found: %s\n", model_path);
+    g_free(model_path);
+    return -1;
+  }
+
+  printf("Read model: %s\n", model_path);
+  auto model = readNetFromONNX(model_path);
+  g_free(model_path); // Free allocated memory
+  printf("Test model\n");
+
+  if (model.empty()) {
+    fprintf(stderr, "Failed to load model\n");
+    return -1;
+  }
+
+  printf("Creating Mat\n");
   Mat image = Mat(h, w, CV_8UC4, input_image);
   Mat imageRGB;
 
+  printf("Set colorspace\n");
   cvtColor(image, imageRGB, COLOR_RGBA2RGB);
 
+  printf("Generating input blob\n");
   Mat blob = blobFromImage(imageRGB, 1.0f/255.0f, Size(1024,1024), Scalar(), true, false);
 
+  printf("Set input\n");
   model.setInput(blob);
 
   vector<Mat> outputs;
-  const vector<String> output_names = {"output0", "output1", "onnx::Reshape_1276", "onnx::Reshape_1295", "onnx::Concat_1237", "1191"};
+  vector<String> output_names = model.getUnconnectedOutLayersNames();
+
+  printf("Forward with names:");
+  for(size_t i=0; i<output_names.size(); i++) {
+    printf(" %s", output_names[i].c_str());
+  }
+  printf("\n");
+
   model.forward(outputs, output_names);
 
+  if (outputs.size() < 1) {
+    fprintf(stderr, "No any model output (%zu)\n", outputs.size());
+    return -1;
+  }
+
+  printf("Prepare output data:");
   prep_out_data(outputs, outputs[0].size[1], outputs[0].size[2], out, image.rows, image.cols, n_masks);
-  
+  printf("Finishing processing model");
+
   return 0;
 }
 
