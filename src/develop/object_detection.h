@@ -1,6 +1,7 @@
 #ifndef OBJECT_DETECTION_H
 #define OBJECT_DETECTION_H
 
+#include "common/darktable.h"
 #include "develop/tensor_box.h"
 #include <stdio.h>
 
